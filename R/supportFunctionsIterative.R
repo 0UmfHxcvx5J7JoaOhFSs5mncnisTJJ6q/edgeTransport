@@ -7,27 +7,59 @@
 #' @param demScenario demand scenario
 #' @param transportPolScenario Transport policy scenario
 #' @import data.table
+#' @importFrom magrittr %>%
+#' @importFrom rmndt magpie2dt
 #' @export
 
 # Loads the csv input files chooses the correct scenario and
-  # converts the files into RDS local files
-  csv2RDS <- function(filename, inputPath, SSPscenario, demScenario, transportPolScenario) {
-    if (filename == "scenSpecPrefTrends") colNames <- c("period", "region", "SSPscen", "demScen", "transportPolScen", "sector",
-                                                        "subsectorL1", "subsectorL2", "subsectorL3", "vehicleType", "technology",
-                                                        "level", "variable", "unit", "value")
-    else if (filename == "initialIncoCosts") colNames <- c("period", "region", "SSPscen", "demScen", "transportPolScen", "univocalName","technology","variable","unit","type","value")
-    else if (filename == "timeValueCosts") colNames <-  c("period", "region", "SSPscen", "demScen", "transportPolScen", "univocalName", "variable", "unit", "value")
-    else if (filename == "f29_trpdemand") colNames <-  c("period", "region", "SSPscen", "demScen", "transportPolScen", "all_in", "value")
-    else colNames <-  c("period", "region", "SSPscen", "demScen", "transportPolScen",
-                        "univocalName", "technology", "variable", "unit", "value")
-    tmp <- fread(
-      file.path(inputPath, paste0(filename, ".cs4r")), skip = 5, col.names = eval(colNames))
-    tmp <- tmp[SSPscen == SSPscenario & demScen == demScenario & transportPolScen == transportPolScenario][, c("SSPscen", "demScen", "transportPolScen") := NULL]
-    # magclass enforces the same temporal resolution for all vehicletypes -> get rid of the introduced NAs
-    assign(filename, tmp[!is.na(tmp$value)])
-    tmp <- setNames(list(get(eval(filename))), filename)
-    return(tmp)
+# converts the files into RDS local files
+csv2RDS <- function(filename, inputPath, SSPscenario, demScenario,
+                    transportPolScenario) {
+  colNames <- c(
+  # first five and the last column name are equal, the others depend on the
+  # file to be read
+    "period", "region", "SSPscen", "demScen", "transportPolScen",
+    switch(
+      filename,
+      "scenSpecPrefTrends" = c("sector", "subsectorL1", "subsectorL2",
+                               "subsectorL3", "vehicleType", "technology",
+                               "level", "variable", "unit"),
+
+      "initialIncoCosts"   = c("univocalName", "technology", "variable", "unit",
+                               "type"),
+
+      "timeValueCosts"     = c("univocalName", "variable", "unit"),
+      "f29_trpdemand"      = "all_in",
+      # default
+      c("univocalName", "technology", "variable", "unit")
+    ),
+    "value")
+
+  # read either .cs4r or .rds files; prefer .rds if both exist
+  if (0 == file.access(file.path(inputPath, paste0(filename, '.rds')), 4)) {
+    tmp <- readRDS(file.path(inputPath, paste0(filename, ".rds"))) %>%
+      # filter combinations in magclass object for faster conversion of less
+      # data
+      `[`(,,paste(SSPscenario, demScenario, transportPolScenario,
+                  sep = '.')) %>%
+      magpie2dt(regioncol = colNames[2],
+                yearcol = colNames[1],
+                datacols = head(colNames[c(-1, -2)], -1),
+                valcol = tail(colNames, 1))
   }
+  else {
+    tmp <- fread(input = file.path(inputPath, paste0(filename, ".cs4r")),
+                 skip = 5, col.names = eval(colNames)) %>%
+      `[`(  SSPscen == SSPscenario
+          & demScen == demScenario
+          & transportPolScen == transportPolScenario)
+  }
+
+  return(setNames(list(tmp %>%
+                         `[`(,colNames[3:5] := NULL) %>%
+                         `[`(!is.na(value))),
+                  filename))
+}
 
 toolLoadRDSinputs <- function(edgeTransportFolder, inputFiles) {
 
@@ -100,7 +132,9 @@ toolLoadIterativeInputs <- function(edgeTransportFolder, inputFolder, inputFiles
   # Input from REMIND input data
   # In the first iteration input data needs to be loaded
   if (!dir.exists(file.path(edgeTransportFolder)))  {
-    print("Loading csv data from input folder and creating RDS files...")}
+    print("Loading csv data from input folder and creating RDS files...")
+  }
+
   RDSfiles <- list()
   for (filename in inputFiles) {
     if (length(list.files(file.path(".", edgeTransportFolder), paste0(filename, ".RDS"), recursive = TRUE, full.names = TRUE)) < 1) {
@@ -119,9 +153,11 @@ toolLoadIterativeInputs <- function(edgeTransportFolder, inputFolder, inputFiles
     RDSfiles$f29_trpdemand[, unit := ifelse(sector %in% c("trn_pass", "trn_aviation_intl"), "billion pkm/yr", "billion tkm/yr")][, variable := "ES"]
     setcolorder(RDSfiles$f29_trpdemand, c("region", "period", "sector", "value", "unit"))
   }
-  if (length(RDSfiles) > 0) storeData(file.path(".", edgeTransportFolder), varsList = RDSfiles)
+  if (length(RDSfiles) > 0)
+    storeData(file.path(".", edgeTransportFolder), varsList = RDSfiles)
 
-  if (!length(RDSfiles) == length(inputFiles)) RDSfiles <- toolLoadRDSinputs(edgeTransportFolder, inputFiles)
+  if (!length(RDSfiles) == length(inputFiles))
+    RDSfiles <- toolLoadRDSinputs(edgeTransportFolder, inputFiles)
 
   # Time resolution
   dtTimeRes <- unique(RDSfiles$scenSpecEnIntensity[, c("univocalName", "period")])
