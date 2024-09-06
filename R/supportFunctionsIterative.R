@@ -161,6 +161,8 @@ toolLoadIterativeInputs <- function(edgeTransportFolder, inputFolder, inputFiles
 
   # Time resolution
   dtTimeRes <- unique(RDSfiles$scenSpecEnIntensity[, c("univocalName", "period")])
+  # iterativeEDGETransport() behaviour depends on the row order of this table
+  setorder(dtTimeRes, univocalName, period)
   highRes <- unique(dtTimeRes$period)
   lowResUnivocalNames <- copy(dtTimeRes)
   lowResUnivocalNames <- lowResUnivocalNames[, .(test = all(highRes %in% period)), by = univocalName]
